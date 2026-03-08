@@ -1,0 +1,97 @@
+1. Mimari ve Teknoloji Dağılımı
+
+Bu sistemi "Microservices" mimarisiyle kurmalısın. İstemci (React) tek bir kapıdan (Gateway) girer, arkada işler döner.
+
+Eklememiz Gereken Teknolojiler:
+
+Redis: (Kesinlikle eklemelisin) Stok kontrolü ve hız için PostgreSQL'e her seferinde gitmemek lazım.
+
+Spring Cloud Gateway: Tüm servislerin önündeki kapı.
+
+Spring Security (JWT): Güvenliksiz olmaz.
+
+Zipkin / Sleuth (Opsiyonel): Servisler arası isteği takip etmek için (Tracing).
+
+2. Servisler ve Görevleri (Minimum Mimari)
+
+Sistemi 4 ana parçaya bölelim:
+
+API Gateway (Spring Boot):
+
+Tüm trafik buraya gelir. Load Balancer burada devreye girer.
+
+Gelen isteği ilgili servise yönlendirir.
+
+Product/Stock Service (Spring Boot + PostgreSQL + Redis):
+
+Ürünlerin listelendiği ve stok bilgisinin tutulduğu yer.
+
+Kritik Nokta: Bir ürün için "Satın Al" dendiğinde, önce Redis'ten stok düşülür (Hız için), sonra Kafka'ya "Stok Düştü" eventi atılır.
+
+Order Service (Spring Boot + PostgreSQL + Kafka):
+
+Kafka'yı dinler. "Stok Düştü" mesajını alınca siparişi veritabanına (PostgreSQL) yazar.
+
+Bu, "Event Driven Architecture" (Olay Güdümlü Mimari) örneğidir. Sistem yoğunluktan çökmez, Kafka mesajları sıraya dizer.
+
+Notification Service (Spring Boot + RabbitMQ):
+
+Sipariş tamamlanınca kullanıcıya "Siparişiniz alındı" e-postası (simülasyonu) gönderir.
+
+Neden RabbitMQ? Kafka veri akışı (streaming) için, RabbitMQ ise görev kuyruğu (task queue) için daha iyidir. Mülakatta "Kafka'yı sipariş akışı için, RabbitMQ'yu asenkron bildirimler için kullandım" dersen çok puan toplarsın.
+
+Frontend (React + Nginx):
+
+React bilgin az olduğu için burayı çok basit tut: Bir "Login" sayfası, bir "Ürün Listesi" ve yanında "Satın Al" butonu. Sadece API'ye istek atsın ve sonucu göstersin yeter. Tasarıma uğraşma, Bootstrap veya Material UI kullan geç.
+
+3. Altyapı (DevOps Kısmı)
+
+Docker: Her servisin (DB, Redis, Backend app'ler) kendi Dockerfile'ı olacak.
+
+Kubernetes (K8s): Bu container'ları yönetmek için. Örneğin "Order Service"ten 3 tane ayağa kaldıracaksın (ReplicaSet).
+
+Load Balancer (Ingress): Gelen trafiği bu 3 Order Service kopyasına dağıtacak.
+
+1. Proje Ne Yapacak? (Senaryo Akışı)
+
+Kullanıcı siteye girdiğinde ve butona bastığında arka planda şunlar olacak:
+
+Giriş (Login): Kullanıcı basit bir formla (username/password) giriş yapar. (Spring Security & JWT).
+
+Vitrin (Dashboard): Ekranda tek bir konser kartı görünür. Örneğin: "Tarkan Konseri - Kalan Bilet: 50".
+
+Cache Kullanımı (Redis): Kullanıcı sayfayı yenilediğinde "Kalan Bilet" bilgisi PostgreSQL'den değil, Redis'ten gelir. (Çünkü 10.000 kişi DB'ye sorarsa DB çöker).
+
+Satın Alma İsteği (Producer): Kullanıcı "Satın Al" butonuna basar. Frontend, isteği atar.
+
+Sistem, DB'ye yazmaya çalışmaz.
+
+İsteği alır, bir paket haline getirir ve Kafka'ya fırlatır.
+
+Kullanıcıya hemen "Talebini aldık, işliyoruz..." mesajı döner. (Non-blocking / Asenkron yapı).
+
+İşleme (Consumer): Arka planda çalışan diğer servis (Order Service), Kafka sırasındaki mesajları tek tek okur.
+
+Stok var mı? Kontrol eder.
+
+Varsa: Stoğu düşer, siparişi PostgreSQL'e kaydeder.
+
+Bildirim (Notification): Sipariş başarılıysa, bu bilgi RabbitMQ'ya gönderilir.
+
+Notification servisi RabbitMQ'yu dinler ve (loglara yazarak simüle ettiğimiz) "Sayın X, biletiniz mail atıldı" işlemini yapar.
+
+2. Proje Ne YAPMAYACAK? (Kapsam Dışı - Scope Out)
+
+Bu projeyi hızlı bitirmek istiyorsan şunları ASLA yapma. Bunlar "business logic" hamallığıdır, teknik yetenek göstermez:
+
+Sepet Mantığı Yok: Kullanıcı ürünü sepete atıp gezmeye devam etmeyecek. Butona bastığı an satın alma süreci başlar. (Buy Now mantığı).
+
+Admin Paneli Yok: Konser eklemek, fiyat değiştirmek için panel yazma. Bunları veritabanına elle (SQL insert ile) veya uygulamanın başında otomatik (Data Seeder ile) ekle.
+
+Gerçek Ödeme Yok: Kredi kartı formu koyma. "Satın Al"a basınca ödeme başarılı sayılacak.
+
+Kayıt Ol (Register) Ekranı Yok: Vakit kaybetme. Veritabanında hazır user1, user2 diye 2-3 kullanıcı olsun, onlarla gir.
+
+Detaylı Profil Sayfası Yok: Kullanıcı geçmiş siparişlerini görmese de olur veya çok basit bir liste yeterli.
+
+Karmaşık UI Yok: Frontend sadece butonların çalıştığı, bootstrap ile giydirilmiş çirkin olmayan basit bir sayfa olacak. CSS ile uğraşma.
